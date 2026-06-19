@@ -1,5 +1,5 @@
 /**
- * REST polling transport — used when WebSocket is unavailable.
+ * REST polling transport using the Smart Money alerts feed.
  */
 
 import { sleep } from './http.js';
@@ -16,26 +16,35 @@ export class TradePoller {
 
   async start() {
     this.running = true;
-    logger.info('Starting REST polling transport', {
+    logger.info('Starting Smart Money polling transport', {
       intervalSeconds: Math.round(this.intervalMs / 1000),
       minBetSize: this.minBetSize,
     });
 
-    const lookbackSeconds = Math.ceil(this.intervalMs / 1000) * 3;
-
     while (this.running) {
       const startedAt = Date.now();
       try {
-        const startTime = Math.floor(Date.now() / 1000) - lookbackSeconds;
-        const trades = await this.client.getRecentTrades({
+        let trades = await this.client.getSmartMoneyAlerts({
           minTotal: this.minBetSize,
           limit: 200,
-          startTime,
         });
+
+        // If smart-money endpoint returns nothing, fall back to basic trades
+        if (!trades || trades.length === 0) {
+          logger.debug('Smart money returned 0 results, trying basic trades feed');
+          const startTime = Math.floor(Date.now() / 1000) - Math.ceil(this.intervalMs / 1000) * 3;
+          trades = await this.client.getRecentTrades({
+            minTotal: this.minBetSize,
+            limit: 200,
+            startTime,
+          });
+        }
+
         const summary = await this.processor.processBatch(trades);
-        logger.debug('Poll cycle complete', { fetched: trades.length, ...summary });
         if (summary.sent > 0 || summary.failed > 0) {
           logger.info('Poll cycle delivered alerts', { ...summary });
+        } else {
+          logger.debug('Poll cycle complete', { fetched: trades.length, ...summary });
         }
       } catch (error) {
         logger.error('Poll cycle failed', {
