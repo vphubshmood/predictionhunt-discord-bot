@@ -1,5 +1,7 @@
 /**
- * In-memory index of market metadata keyed by market id.
+ * In-memory index of market metadata keyed by the platform-native market id.
+ * Mirrors /v2/markets so we can enrich each whale trade with a title,
+ * outcome label, category and link.
  */
 
 import { logger } from './logger.js';
@@ -39,10 +41,11 @@ export class MarketIndex {
             if (!marketId) continue;
             next.set(String(marketId), {
               title: market.event_title || market.title || '',
+              eventTitle: market.event_title || '',
+              outcomeLabel: market.title || '',
               category: market.category || '',
               platform: market.platform || platform,
               sourceUrl: market.source_url || '',
-              eventTitle: market.event_title || '',
             });
           }
           cursor = nextCursor || undefined;
