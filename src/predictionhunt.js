@@ -1,5 +1,8 @@
 /**
  * PredictionHunt REST API client.
+ * Uses /v2/alerts/smart-money as the primary whale feed — it returns
+ * full market titles, real outcome labels (team/candidate names),
+ * stake, payout, and lifetime trader profit all in one response.
  */
 
 import { requestWithRetry } from './http.js';
@@ -20,7 +23,6 @@ export class PredictionHuntClient {
         url.searchParams.set(key, String(value));
       }
     }
-
     const response = await requestWithRetry(
       url.toString(),
       {
@@ -33,7 +35,6 @@ export class PredictionHuntClient {
         label: `predictionhunt GET ${path}`,
       }
     );
-
     const text = await response.text();
     let body;
     try {
@@ -41,7 +42,6 @@ export class PredictionHuntClient {
     } catch {
       throw new Error(`predictionhunt GET ${path} returned non-JSON (status ${response.status})`);
     }
-
     if (!response.ok) {
       const message = body?.message || body?.error || `HTTP ${response.status}`;
       throw new Error(`predictionhunt GET ${path} failed: ${message}`);
@@ -61,6 +61,50 @@ export class PredictionHuntClient {
     }
   }
 
+  /**
+   * Fetch smart-money whale alerts — the primary data source.
+   * Returns full titles, outcome labels, stake, payout, lifetime profit.
+   */
+  async getSmartMoneyAlerts({ minTotal, limit = 100, platform } = {}) {
+    const body = await this.get('/v2/alerts/smart-money', {
+      min_stake: minTotal,
+      limit,
+      platform,
+    });
+    // Normalize the smart-money response into the unified trade shape
+    const alerts = Array.isArray(body?.alerts) ? body.alerts :
+                   Array.isArray(body?.trades) ? body.trades :
+                   Array.isArray(body) ? body : [];
+    return alerts.map((a) => ({
+      // Identity
+      trade_id: a.trade_id || a.id,
+      platform: a.platform || 'polymarket',
+      market_id: a.market_id || a.condition_id || a.ticker,
+      // The full resolved market title — e.g. "San Diego Padres vs Texas Rangers"
+      title: a.market_title || a.title || a.event_title || '',
+      // The specific outcome label — e.g. "San Diego Padres", "Yes", "Under"
+      outcome_label: a.outcome || a.side_label || a.outcome_label || '',
+      // Side: yes / no / over / under
+      side: (a.side || a.action || '').toLowerCase(),
+      // Prices and amounts
+      price: a.price ?? a.entry_price,
+      amount_usd: a.stake ?? a.amount_usd ?? a.total,
+      payout: a.payout,
+      // Trader info
+      wallet: a.wallet || a.trader_wallet,
+      wallet_name: a.wallet_name || a.trader_name,
+      smart_lifetime_pnl: a.lifetime_profit ?? a.lifetime_pnl ?? a.smart_lifetime_pnl,
+      // Timing
+      executed_at: a.executed_at || a.created_at,
+      timestamp: a.timestamp || a.ts,
+      // Link
+      source_url: a.source_url || a.market_url,
+    }));
+  }
+
+  /**
+   * Fallback: basic trades feed used only if smart-money endpoint fails.
+   */
   async getRecentTrades({ minTotal, limit = 100, startTime, platform } = {}) {
     const body = await this.get('/v2/trades', {
       min_total: minTotal,
