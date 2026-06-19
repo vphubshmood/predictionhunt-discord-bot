@@ -1,17 +1,8 @@
-/**
- * Normalizes a raw PredictionHunt trade into a flat "alert" and formats it
- * into a branded VP Hub trade-card embed.
- */
-
 import { resolveCategory } from './categories.js';
 
 const CATEGORY_COLORS = {
-  sports: 0x2ecc71,
-  crypto: 0xf1c40f,
-  politics: 0x3498db,
-  finance: 0x9b59b6,
-  entertainment: 0xe91e63,
-  other: 0x95a5a6,
+  sports: 0x2ecc71, crypto: 0xf1c40f, politics: 0x3498db,
+  finance: 0x9b59b6, entertainment: 0xe91e63, other: 0x95a5a6,
 };
 
 function formatPrice(price) {
@@ -21,19 +12,12 @@ function formatPrice(price) {
   return String(price);
 }
 
-function formatProbability(price) {
-  const n = Number(price);
-  if (!Number.isFinite(n) || n <= 0 || n > 1) return 'n/a';
-  return `${Math.round(n * 100)}%`;
-}
-
 function formatUsd(amount) {
   const n = Number(amount);
   if (!Number.isFinite(n)) return 'n/a';
   return `$${Math.round(n).toLocaleString('en-US')}`;
 }
 
-/** Compact money: 73120 -> "+$73.1K", 2400000 -> "+$2.4M". */
 function formatCompactUsd(amount) {
   const n = Number(amount);
   if (!Number.isFinite(n)) return 'n/a';
@@ -52,26 +36,19 @@ function shortenWallet(addr) {
 function formatPlatform(platform) {
   if (!platform) return 'Unknown';
   const map = {
-    polymarket: 'Polymarket',
-    kalshi: 'Kalshi',
-    predictit: 'PredictIt',
-    prophetx: 'ProphetX',
-    opinion: 'Opinion',
-    predictfun: 'PredictFun',
+    polymarket: 'Polymarket', kalshi: 'Kalshi', predictit: 'PredictIt',
+    prophetx: 'ProphetX', opinion: 'Opinion', predictfun: 'PredictFun',
   };
   return map[String(platform).toLowerCase()] || platform;
 }
 
-/** Make a Kalshi ticker readable: "KXBTC15M" -> "BTC 15M". */
 function humanizeTicker(marketId) {
   if (!marketId) return 'Unknown market';
-  const parts = String(marketId).split('-');
+  const s = String(marketId);
+  if (s.startsWith('0x')) return null; // Polymarket hash — skip humanizing
+  const parts = s.split('-');
   const prettySeries = (raw) =>
-    String(raw)
-      .replace(/^KX/i, '')
-      .replace(/([A-Z])(\d)/i, '$1 $2')
-      .trim();
-
+    String(raw).replace(/^KX/i, '').replace(/([A-Z])(\d)/i, '$1 $2').trim();
   if (parts.length >= 2) {
     const series = prettySeries(parts[0]);
     const when = parts[1];
@@ -82,10 +59,9 @@ function humanizeTicker(marketId) {
     }
     return `${series} market`;
   }
-  return prettySeries(marketId);
+  return prettySeries(s);
 }
 
-/** Best-effort clickable link to the market, even without metadata. */
 function buildMarketLink({ platform, marketId, sourceUrl }) {
   if (sourceUrl) return sourceUrl;
   const p = String(platform || '').toLowerCase();
@@ -104,24 +80,24 @@ export function normalizeTrade({ trade, marketIndex }) {
   const meta = marketIndex.lookup(marketId) || {};
 
   const userRaw =
-    trade.taker_name ||
-    trade.wallet_name ||
-    trade.maker_name ||
-    trade.taker_addr ||
-    trade.wallet ||
-    trade.maker_addr ||
-    '';
+    trade.taker_name || trade.wallet_name || trade.maker_name ||
+    trade.taker_addr || trade.wallet || trade.maker_addr || '';
   const user = userRaw ? shortenWallet(userRaw) : 'unknown';
 
   const side = (trade.side || trade.taker_side || '').toString().toLowerCase() || 'n/a';
   const platformRaw = trade.platform || meta.platform || '';
   const platform = formatPlatform(platformRaw);
 
-  const realTitle = meta.title || meta.eventTitle || trade.title || '';
-  const title = realTitle || `⚠️ Unresolved — ${humanizeTicker(marketId)}`;
-  const titleResolved = Boolean(realTitle);
-  const category = resolveCategory({ category: meta.category, title });
+  const realTitle = meta.eventTitle || meta.title || trade.title || '';
+  const humanized = humanizeTicker(marketId);
+  const title = realTitle
+    ? realTitle
+    : humanized
+    ? `⚠️ Unresolved — ${humanized}`
+    : '⚠️ Unresolved — view link below';
 
+  const outcomeLabel = trade.outcome_label || meta.outcomeLabel || '';
+  const category = resolveCategory({ category: meta.category, title });
   const amountUsd = Number(trade.amount_usd ?? trade.total ?? 0);
   const placedAt =
     trade.executed_at ||
@@ -138,31 +114,32 @@ export function normalizeTrade({ trade, marketIndex }) {
 
   return {
     tradeId: String(trade.trade_id ?? `${marketId}:${trade.timestamp ?? placedAt}:${userRaw}`),
-    user,
-    userRaw,
-    title,
-    titleResolved,
-    category,
-    platform,
-    side,
-    amountUsd,
-    price: trade.price,
-    sourceUrl,
-    placedAt,
-    marketId: String(marketId),
-    traderProfit,
+    user, userRaw, title, outcomeLabel, category, platform,
+    side, amountUsd, price: trade.price, sourceUrl, placedAt,
+    marketId: String(marketId), traderProfit,
   };
 }
 
-export function buildDiscordPayload(alert) {
-  const sideMap = { yes: 'Up', no: 'Down', over: 'Over', under: 'Under' };
-  const sideWord = sideMap[alert.side] || (alert.side === 'n/a' ? '' : alert.side.toUpperCase());
-  const sideLabel = sideWord ? `BUY ${sideWord}` : 'n/a';
+function buildSideLabel(alert) {
+  // Use real outcome name if available (e.g. "San Diego Padres", "Yes", "Under")
+  const outcome = (alert.outcomeLabel || '').trim();
+  if (outcome && !['yes','no','over','under'].includes(outcome.toLowerCase())) {
+    if (alert.side === 'yes') return `BUY ${outcome}`;
+    if (alert.side === 'no') return `FADE ${outcome}`;
+  }
+  // Crypto and finance = Up/Down. Everything else = Yes/No.
+  const isPriceMarket = alert.category === 'crypto' || alert.category === 'finance';
+  const map = isPriceMarket
+    ? { yes: 'Up', no: 'Down', over: 'Over', under: 'Under' }
+    : { yes: 'Yes', no: 'No', over: 'Over', under: 'Under' };
+  const word = map[alert.side] || (alert.side === 'n/a' ? '' : alert.side.toUpperCase());
+  return word ? `BUY ${word}` : 'n/a';
+}
 
-  // Payout = stake / entry price (each winning share settles at $1).
+export function buildDiscordPayload(alert) {
+  const sideLabel = buildSideLabel(alert);
   const priceNum = Number(alert.price);
-  const payout =
-    Number.isFinite(priceNum) && priceNum > 0 ? alert.amountUsd / priceNum : null;
+  const payout = Number.isFinite(priceNum) && priceNum > 0 ? alert.amountUsd / priceNum : null;
 
   const fields = [
     { name: 'Side', value: sideLabel, inline: true },
@@ -181,7 +158,6 @@ export function buildDiscordPayload(alert) {
     fields.push({ name: '\u200b', value: `[🔗 View this market](${alert.sourceUrl})`, inline: false });
   }
 
-    // Green for Up/Yes/Over, red for Down/No/Under, grey if unknown.
   const GREEN = 0x2ecc71;
   const RED = 0xe74c3c;
   const GREY = 0x95a5a6;
@@ -189,18 +165,16 @@ export function buildDiscordPayload(alert) {
   if (['yes', 'over'].includes(alert.side)) sideColor = GREEN;
   else if (['no', 'under'].includes(alert.side)) sideColor = RED;
 
-  const embed = {
-    author: { name: 'VP Hub' },
-    title: alert.title.slice(0, 256),
-    url: alert.sourceUrl || undefined,
-    color: sideColor,
-    fields,
-    footer: { text: `VP Hub • ${alert.platform} • ${alert.category}` },
-    timestamp: alert.placedAt,
-  };
-
   return {
     username: 'VP Hub',
-    embeds: [embed],
+    embeds: [{
+      author: { name: 'VP Hub' },
+      title: alert.title.slice(0, 256),
+      url: alert.sourceUrl || undefined,
+      color: sideColor,
+      fields,
+      footer: { text: `VP Hub • ${alert.platform} • ${alert.category}` },
+      timestamp: alert.placedAt,
+    }],
   };
 }
