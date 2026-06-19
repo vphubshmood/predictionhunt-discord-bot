@@ -29,6 +29,16 @@ function buildWebhookMap() {
   };
 }
 
+// Each category can have its own threshold via <CATEGORY>_MIN_BET_SIZE,
+// e.g. CRYPTO_MIN_BET_SIZE=100. Falls back to the global MIN_BET_SIZE.
+function buildMinBetMap(globalMin) {
+  const map = {};
+  for (const category of CATEGORIES) {
+    map[category] = envNumber(`${category.toUpperCase()}_MIN_BET_SIZE`, globalMin);
+  }
+  return map;
+}
+
 export function loadConfig() {
   const apiKey = env('PREDICTIONHUNT_API_KEY');
   const webhooks = buildWebhookMap();
@@ -52,10 +62,18 @@ export function loadConfig() {
   const transportRaw = (env('TRANSPORT') || 'auto').toLowerCase();
   const transport = ['auto', 'websocket', 'polling'].includes(transportRaw) ? transportRaw : 'auto';
 
+  const minBetSize = envNumber('MIN_BET_SIZE', 1000);
+  const minBetSizes = buildMinBetMap(minBetSize);
+  // The cheap pre-filter uses the LOWEST threshold of any category, so a trade
+  // that qualifies for a low-threshold category is not dropped too early.
+  const minBetFloor = Math.min(minBetSize, ...Object.values(minBetSizes));
+
   const config = {
     apiKey,
     webhooks,
-    minBetSize: envNumber('MIN_BET_SIZE', 1000),
+    minBetSize,
+    minBetSizes,
+    minBetFloor,
     transport,
     pollIntervalMs: Math.max(15, envNumber('POLL_INTERVAL_SECONDS', 45)) * 1000,
     marketRefreshMs: Math.max(60, envNumber('MARKET_REFRESH_SECONDS', 900)) * 1000,
