@@ -1,5 +1,6 @@
 /**
- * Normalizes a raw trade into a flat alert and builds the Discord embed.
+ * Normalizes a raw PredictionHunt trade into a flat "alert" and formats it
+ * into a branded Discord embed (VP Hub) with the market title up top.
  */
 
 import { resolveCategory } from './categories.js';
@@ -50,22 +51,78 @@ function formatPlatform(platform) {
   return map[String(platform).toLowerCase()] || platform;
 }
 
+/**
+ * Turn a raw Kalshi ticker into something human-readable when we don't yet
+ * have the real market title. e.g. "KXBTC15M-26JUN191400-00" ->
+ * "KXBTC15M (settles 26 JUN 19:14)".
+ */
+function humanizeTicker(marketId) {
+  if (!marketId) return 'Unknown market';
+  const parts = String(marketId).split('-');
+  if (parts.length >= 2) {
+    const series = parts[0];
+    const when = parts[1]; // e.g. 26JUN191400
+    const m = when.match(/^(\d{1,2})([A-Z]{3})(\d{2})(\d{2})(\d{2})?$/);
+    if (m) {
+      const [, day, mon, yy, hh, mm] = m;
+      return `${series} (settles ${day} ${mon} ${hh}:${mm ?? '00'})`;
+    }
+    return `${series} market`;
+  }
+  return `Market ${marketId}`;
+}
+
+/**
+ * Build a best-effort clickable link to the market, even without metadata.
+ */
+function buildMarketLink({ platform, marketId, sourceUrl }) {
+  if (sourceUrl) return sourceUrl;
+  const p = String(platform || '').toLowerCase();
+  if (p === 'kalshi' && marketId) {
+    const series = String(marketId).split('-')[0].toLowerCase();
+    return `https://kalshi.com/markets/${series}`;
+  }
+  if (p === 'polymarket' && marketId) {
+    return `https://polymarket.com/markets?_q=${encodeURIComponent(marketId)}`;
+  }
+  return '';
+}
+
 export function normalizeTrade({ trade, marketIndex }) {
   const marketId = trade.market_id ?? trade.condition_id ?? trade.ticker ?? '';
   const meta = marketIndex.lookup(marketId) || {};
 
   const userRaw =
-    trade.taker_name || trade.wallet_name || trade.maker_name ||
-    trade.taker_addr || trade.wallet || trade.maker_addr || '';
+    trade.taker_name ||
+    trade.wallet_name ||
+    trade.maker_name ||
+    trade.taker_addr ||
+    trade.wallet ||
+    trade.maker_addr ||
+    '';
   const user = userRaw ? shortenWallet(userRaw) : 'unknown';
 
   const side = (trade.side || trade.taker_side || '').toString().toLowerCase() || 'n/a';
-  const platform = formatPlatform(trade.platform || meta.platform);
-  const title = meta.title || meta.eventTitle || trade.title || `Market ${marketId}`;
+  const platformRaw = trade.platform || meta.platform || '';
+  const platform = formatPlatform(platformRaw);
+
+  // Prefer the real, resolved market title; otherwise humanize the ticker so
+  // it's at least readable, and always give a clickable link to verify.
+  const realTitle = meta.title || meta.eventTitle || trade.title || '';
+  const title = realTitle || humanizeTicker(marketId);
+  const titleResolved = Boolean(realTitle);
   const category = resolveCategory({ category: meta.category, title });
 
   const amountUsd = Number(trade.amount_usd ?? trade.total ?? 0);
-  const placedAt = trade.executed_at || (trade.timestamp ? new Date(trade.timestamp * 1000).toISOString() : new Date().toISOString());
+  const placedAt =
+    trade.executed_at ||
+    (trade.timestamp ? new Date(trade.timestamp * 1000).toISOString() : new Date().toISOString());
+
+  const sourceUrl = buildMarketLink({
+    platform: platformRaw,
+    marketId,
+    sourceUrl: meta.sourceUrl || trade.source_url || '',
+  });
 
   let confidence = null;
   if (trade.smart_lifetime_pnl != null) {
@@ -81,12 +138,13 @@ export function normalizeTrade({ trade, marketIndex }) {
     user,
     userRaw,
     title,
+    titleResolved,
     category,
     platform,
     side,
     amountUsd,
     price: trade.price,
-    sourceUrl: meta.sourceUrl || trade.source_url || '',
+    sourceUrl,
     placedAt,
     marketId: String(marketId),
     confidence,
@@ -118,21 +176,22 @@ export function buildDiscordPayload(alert) {
     fields.push({ name: 'Wallet', value: `\`${alert.userRaw}\``, inline: false });
   }
   if (alert.sourceUrl) {
-    fields.push({ name: 'Market Link', value: `[Open market](${alert.sourceUrl})`, inline: false });
+    fields.push({ name: 'Market Link', value: `[🔗 View this market](${alert.sourceUrl})`, inline: false });
   }
 
   const embed = {
+    author: { name: 'VP Hub' },
     title: alert.title.slice(0, 256),
     url: alert.sourceUrl || undefined,
     color: CATEGORY_COLORS[alert.category] ?? CATEGORY_COLORS.other,
-    description: `🐋 **Whale ${sideLabel} ${formatUsd(alert.amountUsd)}** @ ${formatPrice(alert.price)}`,
+    description: `🐋 **Whale bet ${sideLabel} — ${formatUsd(alert.amountUsd)}** @ ${formatPrice(alert.price)}`,
     fields,
-    footer: { text: `PredictionHunt • ${alert.platform} • ${alert.category}` },
+    footer: { text: `VP Hub • ${alert.platform} • ${alert.category}` },
     timestamp: alert.placedAt,
   };
 
   return {
-    username: 'PredictionHunt Whale Alerts',
+    username: 'VP Hub',
     embeds: [embed],
   };
 }
