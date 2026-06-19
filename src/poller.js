@@ -1,5 +1,5 @@
 /**
- * REST polling transport using the Smart Money alerts feed.
+ * REST polling transport — uses the basic /v2/trades feed (proven working).
  */
 
 import { sleep } from './http.js';
@@ -12,35 +12,56 @@ export class TradePoller {
     this.intervalMs = intervalMs;
     this.minBetSize = minBetSize;
     this.running = false;
+    this.seenIds = new Set();
   }
 
   async start() {
     this.running = true;
-    logger.info('Starting Smart Money polling transport', {
+    logger.info('Starting polling transport', {
       intervalSeconds: Math.round(this.intervalMs / 1000),
       minBetSize: this.minBetSize,
     });
 
+    const lookbackSeconds = Math.ceil(this.intervalMs / 1000) * 3;
+
     while (this.running) {
       const startedAt = Date.now();
       try {
-        let trades = await this.client.getSmartMoneyAlerts({
+        const startTime = Math.floor(Date.now() / 1000) - lookbackSeconds;
+        const trades = await this.client.getRecentTrades({
           minTotal: this.minBetSize,
           limit: 200,
+          startTime,
         });
 
-        // If smart-money endpoint returns nothing, fall back to basic trades
-        if (!trades || trades.length === 0) {
-          logger.debug('Smart money returned 0 results, trying basic trades feed');
-          const startTime = Math.floor(Date.now() / 1000) - Math.ceil(this.intervalMs / 1000) * 3;
-          trades = await this.client.getRecentTrades({
-            minTotal: this.minBetSize,
-            limit: 200,
-            startTime,
+        // Then try to enrich each trade with smart money data
+        let enriched = trades;
+        try {
+          const smartData = await this.client.getSmartMoneyAlerts({ limit: 200 });
+          // Build a lookup map from market_id -> smart money data
+          const smartMap = new Map();
+          for (const s of smartData) {
+            if (s.market_id) smartMap.set(String(s.market_id), s);
+          }
+          // Merge smart money fields into each trade
+          enriched = trades.map((t) => {
+            const smart = smartMap.get(String(t.market_id || t.condition_id || ''));
+            if (!smart) return t;
+            return {
+              ...t,
+              title: smart.title || t.title,
+              outcome_label: smart.outcome_label || '',
+              smart_lifetime_pnl: smart.smart_lifetime_pnl ?? t.smart_lifetime_pnl,
+              payout: smart.payout ?? t.payout,
+              source_url: smart.source_url || t.source_url,
+            };
           });
+        } catch {
+          // Smart money enrichment failed — still send with basic data
+          logger.debug('Smart money enrichment skipped, using basic trade data');
         }
 
-        const summary = await this.processor.processBatch(trades);
+        const summary = await this.processor.processBatch(enriched);
         if (summary.sent > 0 || summary.failed > 0) {
           logger.info('Poll cycle delivered alerts', { ...summary });
         } else {
