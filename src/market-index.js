@@ -39,14 +39,19 @@ export class MarketIndex {
           for (const market of markets) {
             const marketId = market?.market_id;
             if (!marketId) continue;
-            next.set(String(marketId), {
+                        const entry = {
               title: market.event_title || market.title || '',
               eventTitle: market.event_title || '',
               outcomeLabel: market.title || '',
               category: market.category || '',
               platform: market.platform || platform,
               sourceUrl: market.source_url || '',
-            });
+            };
+            // Store under every possible ID so lookups always hit
+            next.set(String(marketId), entry);
+            if (market.condition_id) next.set(String(market.condition_id), entry);
+            if (market.ticker) next.set(String(market.ticker), entry);
+            if (market.slug) next.set(String(market.slug), entry);
           }
           cursor = nextCursor || undefined;
           pages += 1;
