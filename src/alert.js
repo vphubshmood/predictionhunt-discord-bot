@@ -1,6 +1,6 @@
 /**
  * Normalizes a raw PredictionHunt trade into a flat "alert" and formats it
- * into a branded Discord embed (VP Hub) with the market title up top.
+ * into a branded VP Hub trade-card embed.
  */
 
 import { resolveCategory } from './categories.js';
@@ -33,6 +33,17 @@ function formatUsd(amount) {
   return `$${Math.round(n).toLocaleString('en-US')}`;
 }
 
+/** Compact money: 73120 -> "+$73.1K", 2400000 -> "+$2.4M". */
+function formatCompactUsd(amount) {
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return 'n/a';
+  const sign = n < 0 ? '-' : '+';
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(1)}K`;
+  return `${sign}$${Math.round(abs)}`;
+}
+
 function shortenWallet(addr) {
   if (typeof addr !== 'string' || addr.length < 12) return addr || 'unknown';
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -51,16 +62,10 @@ function formatPlatform(platform) {
   return map[String(platform).toLowerCase()] || platform;
 }
 
-/**
- * Turn a raw Kalshi ticker into something human-readable when we don't yet
- * have the real market title. e.g. "KXBTC15M-26JUN191400-00" ->
- * "KXBTC15M (settles 26 JUN 19:14)".
- */
+/** Make a Kalshi ticker readable: "KXBTC15M" -> "BTC 15M". */
 function humanizeTicker(marketId) {
   if (!marketId) return 'Unknown market';
   const parts = String(marketId).split('-');
-  // Clean the series code: drop Kalshi's "KX" prefix and put a space before
-  // the number group, e.g. "KXBTC15M" -> "BTC 15M".
   const prettySeries = (raw) =>
     String(raw)
       .replace(/^KX/i, '')
@@ -69,7 +74,7 @@ function humanizeTicker(marketId) {
 
   if (parts.length >= 2) {
     const series = prettySeries(parts[0]);
-    const when = parts[1]; // e.g. 26JUN191400
+    const when = parts[1];
     const m = when.match(/^(\d{1,2})([A-Z]{3})(\d{2})(\d{2})(\d{2})?$/);
     if (m) {
       const [, day, mon, , hh, mm] = m;
@@ -80,9 +85,7 @@ function humanizeTicker(marketId) {
   return prettySeries(marketId);
 }
 
-/**
- * Build a best-effort clickable link to the market, even without metadata.
- */
+/** Best-effort clickable link to the market, even without metadata. */
 function buildMarketLink({ platform, marketId, sourceUrl }) {
   if (sourceUrl) return sourceUrl;
   const p = String(platform || '').toLowerCase();
@@ -114,10 +117,8 @@ export function normalizeTrade({ trade, marketIndex }) {
   const platformRaw = trade.platform || meta.platform || '';
   const platform = formatPlatform(platformRaw);
 
-  // Prefer the real, resolved market title; otherwise humanize the ticker so
-  // it's at least readable, and always give a clickable link to verify.
   const realTitle = meta.title || meta.eventTitle || trade.title || '';
-    const title = realTitle || `⚠️ Unresolved — ${humanizeTicker(marketId)}`;
+  const title = realTitle || `⚠️ Unresolved — ${humanizeTicker(marketId)}`;
   const titleResolved = Boolean(realTitle);
   const category = resolveCategory({ category: meta.category, title });
 
@@ -132,14 +133,8 @@ export function normalizeTrade({ trade, marketIndex }) {
     sourceUrl: meta.sourceUrl || trade.source_url || '',
   });
 
-  let confidence = null;
-  if (trade.smart_lifetime_pnl != null) {
-    confidence = `Trader lifetime PnL ${formatUsd(trade.smart_lifetime_pnl)}`;
-  } else if (trade.rank != null) {
-    confidence = `Rank #${trade.rank}`;
-  } else if (trade.confidence != null) {
-    confidence = String(trade.confidence);
-  }
+  const traderProfit =
+    trade.smart_lifetime_pnl != null ? Number(trade.smart_lifetime_pnl) : null;
 
   return {
     tradeId: String(trade.trade_id ?? `${marketId}:${trade.timestamp ?? placedAt}:${userRaw}`),
@@ -155,36 +150,35 @@ export function normalizeTrade({ trade, marketIndex }) {
     sourceUrl,
     placedAt,
     marketId: String(marketId),
-    confidence,
+    traderProfit,
   };
 }
 
 export function buildDiscordPayload(alert) {
-  const sideLabel = alert.side === 'n/a' ? 'n/a' : alert.side.toUpperCase();
-  const placed = (() => {
-    const ts = Date.parse(alert.placedAt);
-    if (!Number.isFinite(ts)) return alert.placedAt;
-    return `<t:${Math.floor(ts / 1000)}:R>`;
-  })();
+  const sideMap = { yes: 'Up', no: 'Down', over: 'Over', under: 'Under' };
+  const sideWord = sideMap[alert.side] || (alert.side === 'n/a' ? '' : alert.side.toUpperCase());
+  const sideLabel = sideWord ? `BUY ${sideWord}` : 'n/a';
+
+  // Payout = stake / entry price (each winning share settles at $1).
+  const priceNum = Number(alert.price);
+  const payout =
+    Number.isFinite(priceNum) && priceNum > 0 ? alert.amountUsd / priceNum : null;
 
   const fields = [
-    { name: 'Whale', value: alert.user || 'unknown', inline: true },
-    { name: 'Platform', value: alert.platform, inline: true },
-    { name: 'Category', value: alert.category, inline: true },
     { name: 'Side', value: sideLabel, inline: true },
-    { name: 'Bet Size', value: formatUsd(alert.amountUsd), inline: true },
-    { name: 'Price', value: `${formatPrice(alert.price)} (${formatProbability(alert.price)})`, inline: true },
-    { name: 'Time Placed', value: placed, inline: true },
+    { name: 'Entry', value: formatPrice(alert.price), inline: true },
+    { name: '\u200b', value: '\u200b', inline: true },
+    { name: 'Stake', value: formatUsd(alert.amountUsd), inline: true },
+    { name: 'Payout', value: payout != null ? formatUsd(payout) : 'n/a', inline: true },
+    {
+      name: 'Trader Profit',
+      value: alert.traderProfit != null ? formatCompactUsd(alert.traderProfit) : 'n/a',
+      inline: true,
+    },
   ];
 
-  if (alert.confidence) {
-    fields.push({ name: 'Confidence / Rank', value: alert.confidence, inline: true });
-  }
-  if (alert.userRaw && alert.userRaw !== alert.user) {
-    fields.push({ name: 'Wallet', value: `\`${alert.userRaw}\``, inline: false });
-  }
   if (alert.sourceUrl) {
-    fields.push({ name: 'Market Link', value: `[🔗 View this market](${alert.sourceUrl})`, inline: false });
+    fields.push({ name: '\u200b', value: `[🔗 View this market](${alert.sourceUrl})`, inline: false });
   }
 
   const embed = {
@@ -192,7 +186,6 @@ export function buildDiscordPayload(alert) {
     title: alert.title.slice(0, 256),
     url: alert.sourceUrl || undefined,
     color: CATEGORY_COLORS[alert.category] ?? CATEGORY_COLORS.other,
-    description: `🐋 **Whale bet ${sideLabel} — ${formatUsd(alert.amountUsd)}** @ ${formatPrice(alert.price)}`,
     fields,
     footer: { text: `VP Hub • ${alert.platform} • ${alert.category}` },
     timestamp: alert.placedAt,
