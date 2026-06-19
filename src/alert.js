@@ -181,11 +181,19 @@ export function buildDiscordPayload(alert) {
     fields.push({ name: '\u200b', value: `[🔗 View this market](${alert.sourceUrl})`, inline: false });
   }
 
+    // Green for Up/Yes/Over, red for Down/No/Under, grey if unknown.
+  const GREEN = 0x2ecc71;
+  const RED = 0xe74c3c;
+  const GREY = 0x95a5a6;
+  let sideColor = GREY;
+  if (['yes', 'over'].includes(alert.side)) sideColor = GREEN;
+  else if (['no', 'under'].includes(alert.side)) sideColor = RED;
+
   const embed = {
     author: { name: 'VP Hub' },
     title: alert.title.slice(0, 256),
     url: alert.sourceUrl || undefined,
-    color: CATEGORY_COLORS[alert.category] ?? CATEGORY_COLORS.other,
+    color: sideColor,
     fields,
     footer: { text: `VP Hub • ${alert.platform} • ${alert.category}` },
     timestamp: alert.placedAt,
