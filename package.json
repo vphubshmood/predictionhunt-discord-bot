@@ -1,0 +1,17 @@
+{
+  "name": "predictionhunt-discord-bot",
+  "version": "1.0.0",
+  "description": "Discord webhook bot that streams PredictionHunt whale bet alerts into category-specific Discord channels. Runs 24/7 on Railway.",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "license": "MIT"
+}
