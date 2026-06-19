@@ -59,17 +59,25 @@ function formatPlatform(platform) {
 function humanizeTicker(marketId) {
   if (!marketId) return 'Unknown market';
   const parts = String(marketId).split('-');
+  // Clean the series code: drop Kalshi's "KX" prefix and put a space before
+  // the number group, e.g. "KXBTC15M" -> "BTC 15M".
+  const prettySeries = (raw) =>
+    String(raw)
+      .replace(/^KX/i, '')
+      .replace(/([A-Z])(\d)/i, '$1 $2')
+      .trim();
+
   if (parts.length >= 2) {
-    const series = parts[0];
+    const series = prettySeries(parts[0]);
     const when = parts[1]; // e.g. 26JUN191400
     const m = when.match(/^(\d{1,2})([A-Z]{3})(\d{2})(\d{2})(\d{2})?$/);
     if (m) {
-      const [, day, mon, yy, hh, mm] = m;
+      const [, day, mon, , hh, mm] = m;
       return `${series} (settles ${day} ${mon} ${hh}:${mm ?? '00'})`;
     }
     return `${series} market`;
   }
-  return `Market ${marketId}`;
+  return prettySeries(marketId);
 }
 
 /**
@@ -109,7 +117,7 @@ export function normalizeTrade({ trade, marketIndex }) {
   // Prefer the real, resolved market title; otherwise humanize the ticker so
   // it's at least readable, and always give a clickable link to verify.
   const realTitle = meta.title || meta.eventTitle || trade.title || '';
-  const title = realTitle || humanizeTicker(marketId);
+    const title = realTitle || `⚠️ Unresolved — ${humanizeTicker(marketId)}`;
   const titleResolved = Boolean(realTitle);
   const category = resolveCategory({ category: meta.category, title });
 
