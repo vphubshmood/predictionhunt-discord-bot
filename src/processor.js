@@ -6,20 +6,29 @@ import { normalizeTrade } from './alert.js';
 import { logger } from './logger.js';
 
 export class TradeProcessor {
-  constructor({ marketIndex, deduper, notifier, minBetSize }) {
+  constructor({ marketIndex, deduper, notifier, minBetSize, minBetSizes = {}, minBetFloor }) {
     this.marketIndex = marketIndex;
     this.deduper = deduper;
     this.notifier = notifier;
     this.minBetSize = minBetSize;
+    this.minBetSizes = minBetSizes;
+    this.minBetFloor = minBetFloor ?? minBetSize;
   }
 
   async process(trade) {
     const amount = Number(trade.amount_usd ?? trade.total ?? 0);
-    if (!Number.isFinite(amount) || amount < this.minBetSize) {
+    // Cheap pre-filter using the lowest threshold of any category.
+    if (!Number.isFinite(amount) || amount < this.minBetFloor) {
       return 'skipped-small';
     }
 
     const alert = normalizeTrade({ trade, marketIndex: this.marketIndex });
+
+    // Apply the threshold for THIS bet's category (falls back to the global one).
+    const categoryMin = this.minBetSizes[alert.category] ?? this.minBetSize;
+    if (amount < categoryMin) {
+      return 'skipped-small';
+    }
 
     if (!this.deduper.shouldSend(alert)) {
       return 'skipped-duplicate';
