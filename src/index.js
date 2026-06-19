@@ -49,18 +49,20 @@ async function main() {
     maxRetries: config.maxRetries,
     retryBaseDelayMs: config.retryBaseDelayMs,
   });
-  const processor = new TradeProcessor({
+    const processor = new TradeProcessor({
     marketIndex,
     deduper,
     notifier,
     minBetSize: config.minBetSize,
+    minBetSizes: config.minBetSizes,
+    minBetFloor: config.minBetFloor,
   });
 
   const poller = new TradePoller({
     client,
     processor,
     intervalMs: config.pollIntervalMs,
-    minBetSize: config.minBetSize,
+    minBetSize: config.minBetFloor,
   });
 
   let streamer = null;
