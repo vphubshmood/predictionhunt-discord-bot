@@ -90,11 +90,11 @@ export function normalizeTrade({ trade, marketIndex }) {
 
   const realTitle = meta.eventTitle || meta.title || trade.title || '';
   const humanized = humanizeTicker(marketId);
-  const title = realTitle
+    const title = realTitle
     ? realTitle
     : humanized
-    ? `⚠️ Unresolved — ${humanized}`
-    : '⚠️ Unresolved — view link below';
+    ? humanized
+    : `Market ${String(marketId).slice(0, 8)}…`;
 
   const outcomeLabel = trade.outcome_label || meta.outcomeLabel || '';
   const category = resolveCategory({ category: meta.category, title });
