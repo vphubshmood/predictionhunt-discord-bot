@@ -182,4 +182,16 @@ export function buildDiscordPayload(alert) {
   const embed = {
     author: { name: 'VP Hub' },
     title: alert.title.slice(0, 256),
-    url: alert.sourceU
+    url: alert.sourceUrl || undefined,
+    color: CATEGORY_COLORS[alert.category] ?? CATEGORY_COLORS.other,
+    description: `🐋 **Whale bet ${sideLabel} — ${formatUsd(alert.amountUsd)}** @ ${formatPrice(alert.price)}`,
+    fields,
+    footer: { text: `VP Hub • ${alert.platform} • ${alert.category}` },
+    timestamp: alert.placedAt,
+  };
+
+  return {
+    username: 'VP Hub',
+    embeds: [embed],
+  };
+}
