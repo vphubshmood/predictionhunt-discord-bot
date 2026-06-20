@@ -10,6 +10,7 @@ export class TradePoller {
     this.running = false;
     this.startedAt = Math.floor(Date.now() / 1000);
     this.seenIds = new Set();
+    this.smartMoneyWorking = null; // null = untested
   }
 
   async start() {
@@ -22,19 +23,33 @@ export class TradePoller {
     while (this.running) {
       const cycleStart = Date.now();
       try {
-        // Use the basic trades feed — proven working
-        const raw = await this.client.getRecentTrades({
-          minTotal: this.minBetSize,
-          limit: 200,
-          startTime: this.startedAt,
-        });
+        let raw = [];
+
+        // Try Smart Money endpoint first (Dev plan)
+        const smart = await this.client.getSmartMoneyAlerts({ limit: 100 });
+        if (smart.length > 0) {
+          if (!this.smartMoneyWorking) {
+            this.smartMoneyWorking = true;
+            logger.info('Smart Money endpoint working — using full titles and profit data');
+          }
+          raw = smart;
+        } else {
+          // Fall back to basic trades
+          if (this.smartMoneyWorking !== false) {
+            logger.warn('Smart Money returned 0 results — falling back to basic trades feed');
+            this.smartMoneyWorking = false;
+          }
+          raw = await this.client.getRecentTrades({
+            minTotal: this.minBetSize,
+            limit: 200,
+            startTime: this.startedAt,
+          });
+        }
 
         const trades = raw.filter((t) => {
           const ts = t.timestamp ||
             Math.floor(Date.parse(t.executed_at || '') / 1000) || 0;
-          // Block anything older than bot start
           if (ts > 0 && ts < this.startedAt) return false;
-          // Block duplicates
           const id = String(t.trade_id || `${t.market_id}:${t.side}:${t.amount_usd}:${ts}`);
           if (this.seenIds.has(id)) return false;
           this.seenIds.add(id);
