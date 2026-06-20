@@ -88,7 +88,8 @@ export function normalizeTrade({ trade, marketIndex }) {
   const platformRaw = trade.platform || meta.platform || '';
   const platform = formatPlatform(platformRaw);
 
-  const realTitle = meta.eventTitle || meta.title || trade.title || '';
+    const rawTitle = meta.eventTitle || meta.title || trade.title || '';
+  const realTitle = rawTitle.startsWith('unresolved:') ? '' : rawTitle;
   const humanized = humanizeTicker(marketId);
     const title = realTitle
     ? realTitle
