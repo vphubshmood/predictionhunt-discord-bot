@@ -1,10 +1,3 @@
-/**
- * PredictionHunt REST API client.
- * Uses /v2/alerts/smart-money as the primary whale feed — it returns
- * full market titles, real outcome labels (team/candidate names),
- * stake, payout, and lifetime trader profit all in one response.
- */
-
 import { requestWithRetry } from './http.js';
 import { logger } from './logger.js';
 
@@ -62,49 +55,55 @@ export class PredictionHuntClient {
   }
 
   /**
-   * Fetch smart-money whale alerts — the primary data source.
-   * Returns full titles, outcome labels, stake, payout, lifetime profit.
+   * Smart Money alerts — full titles, outcomes, lifetime profit included.
+   * Dev plan endpoint: GET /v2/alerts/smart-money
    */
-  async getSmartMoneyAlerts({ minTotal, limit = 100, platform } = {}) {
-    const body = await this.get('/v2/alerts/smart-money', {
-      min_stake: minTotal,
-      limit,
-      platform,
-    });
-    // Normalize the smart-money response into the unified trade shape
-    const alerts = Array.isArray(body?.alerts) ? body.alerts :
-                   Array.isArray(body?.trades) ? body.trades :
-                   Array.isArray(body) ? body : [];
-    return alerts.map((a) => ({
-      // Identity
-      trade_id: a.trade_id || a.id,
-      platform: a.platform || 'polymarket',
-      market_id: a.market_id || a.condition_id || a.ticker,
-      // The full resolved market title — e.g. "San Diego Padres vs Texas Rangers"
-      title: a.market_title || a.title || a.event_title || '',
-      // The specific outcome label — e.g. "San Diego Padres", "Yes", "Under"
-      outcome_label: a.outcome || a.side_label || a.outcome_label || '',
-      // Side: yes / no / over / under
-      side: (a.side || a.action || '').toLowerCase(),
-      // Prices and amounts
-      price: a.price ?? a.entry_price,
-      amount_usd: a.stake ?? a.amount_usd ?? a.total,
-      payout: a.payout,
-      // Trader info
-      wallet: a.wallet || a.trader_wallet,
-      wallet_name: a.wallet_name || a.trader_name,
-      smart_lifetime_pnl: a.lifetime_profit ?? a.lifetime_pnl ?? a.smart_lifetime_pnl,
-      // Timing
-      executed_at: a.executed_at || a.created_at,
-      timestamp: a.timestamp || a.ts,
-      // Link
-      source_url: a.source_url || a.market_url,
-    }));
+  async getSmartMoneyAlerts({ limit = 100 } = {}) {
+    try {
+      const body = await this.get('/v2/alerts/smart-money', { limit });
+
+      // Log raw response once so we can see the actual field names
+      logger.debug('Smart money raw response', {
+        keys: Object.keys(body || {}),
+        firstItem: JSON.stringify((body?.alerts || body?.trades || body || [])[0] || {}).slice(0, 300),
+      });
+
+      const items =
+        Array.isArray(body?.alerts) ? body.alerts :
+        Array.isArray(body?.trades) ? body.trades :
+        Array.isArray(body?.data) ? body.data :
+        Array.isArray(body) ? body : [];
+
+      return items.map((a) => {
+        const rawTitle = a.market_title || a.title || a.event_title || a.market_name || '';
+        const title = rawTitle.startsWith('unresolved:') ? '' : rawTitle;
+        return {
+          trade_id: a.trade_id || a.id,
+          platform: a.platform || 'polymarket',
+          market_id: a.market_id || a.condition_id || a.ticker,
+          title,
+          outcome_label: a.outcome || a.side_label || a.outcome_label || a.selection || '',
+          side: (a.side || a.action || a.direction || '').toLowerCase(),
+          price: a.price ?? a.entry_price ?? a.avg_price,
+          // Try every possible field name for stake/amount
+          amount_usd: a.stake ?? a.amount_usd ?? a.total ?? a.notional ?? a.size ?? 0,
+          payout: a.payout ?? a.potential_payout,
+          wallet: a.wallet || a.trader_wallet || a.address,
+          wallet_name: a.wallet_name || a.trader_name || a.username,
+          smart_lifetime_pnl: a.lifetime_profit ?? a.lifetime_pnl ?? a.smart_lifetime_pnl ?? a.pnl,
+          executed_at: a.executed_at || a.created_at || a.time,
+          timestamp: a.timestamp || a.ts || a.created_at,
+          source_url: a.source_url || a.market_url || a.url,
+        };
+      });
+    } catch (error) {
+      logger.error('Smart money fetch failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
   }
 
-  /**
-   * Fallback: basic trades feed used only if smart-money endpoint fails.
-   */
   async getRecentTrades({ minTotal, limit = 100, startTime, platform } = {}) {
     const body = await this.get('/v2/trades', {
       min_total: minTotal,
