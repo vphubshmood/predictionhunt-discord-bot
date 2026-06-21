@@ -80,9 +80,6 @@ export function loadConfig() {
     maxRetries: envNumber('MAX_RETRIES', 4),
     retryBaseDelayMs: envNumber('RETRY_BASE_DELAY_MS', 1000),
     dedupeTtlMs: Math.max(60, envNumber('DEDUPE_TTL_SECONDS', 21600)) * 1000,
-    // Drop any bet older than this (in seconds) right before sending, so a stall
-    // or slow delivery drain can never flood old/stale alerts. Set to 0 to disable.
-    maxAlertAgeMs: Math.max(0, envNumber('MAX_ALERT_AGE_SECONDS', 120)) * 1000,
     restBaseUrl: env('REST_BASE_URL') || 'https://www.predictionhunt.com/api',
     wsUrl: env('WS_URL') || 'wss://ws.predictionhunt.com',
     logLevel: (env('LOG_LEVEL') || 'info').toLowerCase(),
