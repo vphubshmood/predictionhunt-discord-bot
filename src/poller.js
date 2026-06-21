@@ -20,9 +20,10 @@ export class TradePoller {
       minBetSize: this.minBetSize,
     });
 
-        // Reset startedAt to RIGHT before first poll so nothing from
-    // the market index load period sneaks in
-    this.startedAt = Math.floor(Date.now() / 1000);
+    // Start 3 minutes in the past to cover the PredictionHunt API's natural
+    // trade surfacing delay — without this, fresh restarts see zero results
+    // because startedAt is set to "now" and the API hasn't caught up yet.
+    this.startedAt = Math.floor(Date.now() / 1000) - 180;
 
     while (this.running) {
       const cycleStart = Date.now();
@@ -51,7 +52,7 @@ export class TradePoller {
 
         if (trades.length > 0) {
           const summary = await this.processor.processBatch(trades);
-          if (summary.sent > 0 || summary.failed > 0) {
+          if (summary.sent > 0 || summary.failed > 0 || summary.stale > 0) {
             logger.info('Poll cycle delivered alerts', { ...summary });
           }
         } else {
