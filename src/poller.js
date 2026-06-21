@@ -20,6 +20,10 @@ export class TradePoller {
       minBetSize: this.minBetSize,
     });
 
+        // Reset startedAt to RIGHT before first poll so nothing from
+    // the market index load period sneaks in
+    this.startedAt = Math.floor(Date.now() / 1000);
+
     while (this.running) {
       const cycleStart = Date.now();
       try {
