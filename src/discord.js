@@ -1,8 +1,4 @@
-/**
- * Discord webhook delivery, routed per category.
- */
-
-import { requestWithRetry } from './http.js';
+import { requestWithRetry, sleep } from './http.js';
 import { logger } from './logger.js';
 import { buildDiscordPayload } from './alert.js';
 
@@ -12,6 +8,8 @@ export class DiscordNotifier {
     this.maxRetries = maxRetries;
     this.retryBaseDelayMs = retryBaseDelayMs;
     this.warnedMissing = new Set();
+    // Track last send time per webhook to avoid Discord rate limits
+    this.lastSent = {};
   }
 
   async send(alert) {
@@ -19,14 +17,21 @@ export class DiscordNotifier {
     if (!webhookUrl) {
       if (!this.warnedMissing.has(alert.category)) {
         this.warnedMissing.add(alert.category);
-        logger.warn('No webhook configured for category; alerts will be dropped', {
-          category: alert.category,
-        });
+        logger.warn('No webhook configured for category', { category: alert.category });
       }
       return false;
     }
 
+    // Enforce minimum 1.5 seconds between sends per category
+    // Discord allows 5 webhook messages per 2 seconds but we stay conservative
+    const now = Date.now();
+    const last = this.lastSent[alert.category] || 0;
+    const gap = now - last;
+    if (gap < 1500) await sleep(1500 - gap);
+    this.lastSent[alert.category] = Date.now();
+
     const payload = buildDiscordPayload(alert);
+    if (!payload) return false;
 
     try {
       const response = await requestWithRetry(
