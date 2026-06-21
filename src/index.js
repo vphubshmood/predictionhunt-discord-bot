@@ -49,13 +49,14 @@ async function main() {
     maxRetries: config.maxRetries,
     retryBaseDelayMs: config.retryBaseDelayMs,
   });
-    const processor = new TradeProcessor({
+  const processor = new TradeProcessor({
     marketIndex,
     deduper,
     notifier,
     minBetSize: config.minBetSize,
     minBetSizes: config.minBetSizes,
     minBetFloor: config.minBetFloor,
+    maxAlertAgeMs: config.maxAlertAgeMs,
   });
 
   const poller = new TradePoller({
